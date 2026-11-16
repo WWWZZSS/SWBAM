@@ -26,13 +26,13 @@ app() {
 
 run make "$bin/swbam-smoke-data" make "$directory"
 app flagstat flagstat -i "$directory/input.bam"
-app rewrite run_all -i "$directory/input.bam" -o "$directory/rewrite.bam" \
+app rewrite view -i "$directory/input.bam" -o "$directory/rewrite.bam" \
     --rank-body-backend auto --rank-body-memory-limit 1 --rank-body-temp-dir "$directory"
-app filter run_all -i "$directory/input.bam" -o "$directory/filtered.bam" \
+app filter view -i "$directory/input.bam" -o "$directory/filtered.bam" \
     --min-mapq 30 --rank-body-temp-dir "$directory"
-app bam2sam run_all -i "$directory/input.bam" -o "$directory/text.sam" \
+app bam2sam view -i "$directory/input.bam" -o "$directory/text.sam" \
     --io-backend mpiio --rank-body-temp-dir "$directory"
-app sam2bam run_all -i "$directory/text.sam" -o "$directory/from-sam.bam" \
+app sam2bam view -i "$directory/text.sam" -o "$directory/from-sam.bam" \
     --rank-body-temp-dir "$directory"
 app collate collate -i "$directory/input.bam" -o "$directory/names.bam" \
     -m 4G -n 66 --rank-body-temp-dir "$directory"
