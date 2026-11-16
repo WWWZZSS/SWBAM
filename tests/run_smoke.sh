@@ -48,8 +48,8 @@ app markdup markdup -i "$directory/sorted.bam" -o "$directory/marked.bam" \
     -m 4G -l 300 --rank-body-temp-dir "$directory"
 app workflow dedup-workflow -i "$directory/input.bam" -o "$directory/workflow.bam" \
     -m 4G -n 66 -T "$directory/workflow" --rank-body-temp-dir "$directory"
-run sdk-count "$bin/swbam-sdk-optimized-count" "$directory/input.bam" --work-memory 8G
-run sdk-rewrite "$bin/swbam-sdk-optimized-bam2bam" "$directory/input.bam" \
+run sdk-count "$bin/swbam-sdk-count" "$directory/input.bam" --work-memory 8G
+run sdk-rewrite "$bin/swbam-sdk-bam2bam" "$directory/input.bam" \
     -o "$directory/sdk-rewrite.bam" --work-memory 8G
 run verify "$bin/swbam-smoke-data" verify "$directory"
 grep -q '20000 + 0 in total' "$directory/flagstat.log"
