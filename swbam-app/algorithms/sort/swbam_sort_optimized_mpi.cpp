@@ -1,6 +1,7 @@
 #include "swbam_mpi.h"
 #include "swbam/operators/bam_read_batch.h"
 #include "swbam/cpe_write_pipeline.h"
+#include "sort-exact-splitters.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -1784,8 +1785,10 @@ void MpiSortStrictSortRun(MpiSortStrictRunArena *arena,
     double wall = GetTime() - t0;
     stats->t_local_sort += wall;
     stats->t_run_sort += wall;
-    MpiSortStrictMakeSamples(arena->records(), arena->record_count,
-                             comm_size, samples);
+    if (samples) {
+        MpiSortStrictMakeSamples(arena->records(), arena->record_count,
+                                 comm_size, samples);
+    }
 }
 
 int MpiSortStrictSpillRun(MpiSortStrictRunArena *arena,
@@ -1950,6 +1953,40 @@ int MpiSortStrictGenerateRuns(
         &block_reader, global_block_begin, rank, comm_size,
         arena, store, tracker,
         runs, samples, stats);
+}
+
+int MpiSortChooseExactRunSplitters(const std::vector<MpiSortStrictRun> &runs,
+                                    MpiSortStrictRunArena &arena, int rank,
+                                    int comm_size, size_t workspace_limit,
+                                    MpiSortStats *stats, std::vector<MpiSortKey> *splitters) {
+    // Search spilled metadata in small pages; never fetch BAM payload to select a key.
+    const size_t page_records = 64;
+    MpiSortRecordMeta page[page_records];
+    size_t cached_run = runs.size(), cached_begin = 0;
+    auto run_size = [&](size_t r) { return static_cast<size_t>(runs[r].extent.record_count); };
+    auto read_key = [&](size_t r, size_t index, MpiSortKey *key) -> bool {
+        const MpiSortStrictRun &run = runs[r];
+        if (run.memory_backed) {
+            *key = MpiSortKeyFromMeta(arena.records()[index]);
+            return true;
+        }
+        const size_t begin = index - index % page_records;
+        if (cached_run != r || cached_begin != begin) {
+            const size_t count = std::min(page_records, run_size(r) - begin);
+            if (MpiSortStrictPreadAll(
+                    run.extent.fd, page, count * sizeof(MpiSortRecordMeta),
+                    run.extent.meta_offset + static_cast<off_t>(begin * sizeof(MpiSortRecordMeta)),
+                    stats) != 0) return false;
+            cached_run = r;
+            cached_begin = begin;
+        }
+        *key = MpiSortKeyFromMeta(page[index - begin]);
+        return true;
+    };
+    return swbam::sort_detail::ChooseExactSplitters(
+        runs.size(), run_size, read_key, MpiSortKeyLess(), rank, comm_size,
+        MPI_COMM_WORLD, workspace_limit >= sizeof(page) ? workspace_limit - sizeof(page) : 0,
+        splitters);
 }
 
 int MpiSortStrictLoadRun(const MpiSortStrictRun &run,
@@ -2803,7 +2840,8 @@ static int OptimizedBamSortMPIImpl(
         int comm_size,
         int compress_level,
         size_t memory_limit,
-        MpiSortStats *stats) {
+        MpiSortStats *stats,
+        bool exact_splitters) {
     double optimized_t0 = GetTime();
     double setup_t0 = GetTime();
     //1. 参数准备
@@ -2884,14 +2922,25 @@ static int OptimizedBamSortMPIImpl(
     std::sort(local_records.begin(), local_records.end(), MpiSortMetaLess());
     stats->t_local_sort += GetTime() - t0;
 
-    //4. 抽样划分数据
+    //4. Select splitters before exchanging any record payload.
     t0 = GetTime();
-    //每个 rank 从本地有序 records 中均匀抽样
-    MpiSortMakeLocalSamples(local_records, comm_size, &local_samples);
-    long long global_sample_count = 0;
-    //rank 0 汇总所有 samples，排序后选出 comm_size - 1 个 splitter，再广播给所有 rank。这样全局排序空间被切成 comm_size 个区间。
-    if (MpiSortChooseSplitters(local_samples, rank, comm_size, &splitters, &global_sample_count) != 0) {
-        return -1;
+    if (exact_splitters) {
+        auto run_size = [&](size_t) { return local_records.size(); };
+        auto read_key = [&](size_t, size_t i, MpiSortKey *key) {
+            *key = MpiSortKeyFromMeta(local_records[i]);
+            return true;
+        };
+        if (swbam::sort_detail::ChooseExactSplitters(
+                1, run_size, read_key, MpiSortKeyLess(), rank, comm_size,
+                MPI_COMM_WORLD, SIZE_MAX, &splitters) != 0) {
+            if (rank == 0) fprintf(stderr, "ERROR: MPI sort exact splitter selection failed.\n");
+            return -1;
+        }
+    } else {
+        MpiSortMakeLocalSamples(local_records, comm_size, &local_samples);
+        long long global_sample_count = 0;
+        if (MpiSortChooseSplitters(local_samples, rank, comm_size, &splitters, &global_sample_count) != 0)
+            return -1;
     }
     stats->sample_records = (long long)local_samples.size();
     stats->t_sample += GetTime() - t0;
@@ -2949,7 +2998,6 @@ static int OptimizedBamSortMPIImpl(
         return -1;
     }
     stats->t_optimized_total += GetTime() - optimized_t0;
-    (void)global_sample_count;
     return 0;
 }
 
@@ -2960,11 +3008,12 @@ int OptimizedBamSortMPI(MemReader &reader,
                     int comm_size,
                     int compress_level,
                     size_t memory_limit,
-                    MpiSortStats *stats) {
+                    MpiSortStats *stats,
+                    bool exact_splitters) {
     return OptimizedBamSortMPIImpl(
         &reader, nullptr, nullptr, 0, reader.size,
         body_sink, global_block_begin, rank, comm_size,
-        compress_level, memory_limit, stats);
+        compress_level, memory_limit, stats, exact_splitters);
 }
 
 int OptimizedBamSortMPI(const swbam::BamInputBackend &input,
@@ -2976,7 +3025,8 @@ int OptimizedBamSortMPI(const swbam::BamInputBackend &input,
                     int comm_size,
                     int compress_level,
                     size_t memory_limit,
-                    MpiSortStats *stats) {
+                    MpiSortStats *stats,
+                    bool exact_splitters) {
     size_t compressed_size = 0;
     for (size_t i = 0; i < span_count; ++i) {
         if (spans[i].compressed_size > SIZE_MAX - compressed_size) return -1;
@@ -2985,7 +3035,7 @@ int OptimizedBamSortMPI(const swbam::BamInputBackend &input,
     return OptimizedBamSortMPIImpl(
         nullptr, &input, spans, span_count, compressed_size,
         body_sink, global_block_begin, rank, comm_size,
-        compress_level, memory_limit, stats);
+        compress_level, memory_limit, stats, exact_splitters);
 }
 
 static int OptimizedBamExternalSortMPIImpl(
@@ -3000,7 +3050,8 @@ static int OptimizedBamExternalSortMPIImpl(
         int compress_level,
         size_t memory_limit,
         const char *temp_prefix,
-        MpiSortStats *stats) {
+        MpiSortStats *stats,
+        bool exact_splitters) {
     double optimized_t0 = GetTime();
     stats->sort_mode = 1;
     MpiSortMemoryTracker tracker(memory_limit);
@@ -3100,16 +3151,17 @@ static int OptimizedBamExternalSortMPIImpl(
         if (!all_ranks_ok(setup_ok)) break;
         MpiSortMemoryDiag(rank, "external_setup_done", 0, run_arena.capacity);
 
+        auto *samples = exact_splitters ? nullptr : &local_samples;
         int generate_ret = reader
             ? MpiSortStrictGenerateRuns(
                   *reader, global_block_begin, rank, comm_size,
-                  &run_arena, &temp_store, &tracker, &runs, &local_samples,
+                  &run_arena, &temp_store, &tracker, &runs, samples,
                   stats)
             : MpiSortStrictGenerateRuns(
                   *input, spans, span_count, global_block_begin,
                   rank, comm_size, &run_arena, &temp_store,
                   &tracker,
-                  &runs, &local_samples, stats);
+                  &runs, samples, stats);
         int generate_ok = generate_ret == 0 ? 1 : 0;
         MpiSortMemoryDiag(rank, "external_generate_done",
                           run_arena.record_count * sizeof(MpiSortRecordMeta),
@@ -3118,11 +3170,17 @@ static int OptimizedBamExternalSortMPIImpl(
         stats->external_runs = (long long)runs.size();
 
         double sample_t0 = GetTime();
-        long long global_sample_count = 0;
-        if (MpiSortChooseSplitters(local_samples, rank, comm_size,
-                                   &splitters,
-                                   &global_sample_count) != 0) {
-            break;
+        if (exact_splitters) {
+            if (MpiSortChooseExactRunSplitters(
+                    runs, run_arena, rank, comm_size, memory_limit - tracker.current,
+                    stats, &splitters) != 0) {
+                if (rank == 0) fprintf(stderr, "ERROR: external sort exact splitter selection failed.\n");
+                break;
+            }
+        } else {
+            long long global_sample_count = 0;
+            if (MpiSortChooseSplitters(local_samples, rank, comm_size,
+                                       &splitters, &global_sample_count) != 0) break;
         }
         stats->sample_records = (long long)local_samples.size();
         stats->t_sample += GetTime() - sample_t0;
@@ -3189,7 +3247,6 @@ static int OptimizedBamExternalSortMPIImpl(
                 stats) != 0) {
             break;
         }
-        (void)global_sample_count;
         MpiSortMemoryDiag(rank, "external_merge_done",
                           segments.capacity() * sizeof(MpiSortStrictSegment),
                           (size_t)body_sink.size());
@@ -3220,11 +3277,12 @@ int OptimizedBamExternalSortMPI(MemReader &reader,
                             int compress_level,
                             size_t memory_limit,
                             const char *temp_prefix,
-                            MpiSortStats *stats) {
+                            MpiSortStats *stats,
+                            bool exact_splitters) {
     return OptimizedBamExternalSortMPIImpl(
         &reader, nullptr, nullptr, 0, body_sink,
         global_block_begin, rank, comm_size, compress_level,
-        memory_limit, temp_prefix, stats);
+        memory_limit, temp_prefix, stats, exact_splitters);
 }
 
 int OptimizedBamExternalSortMPI(const swbam::BamInputBackend &input,
@@ -3237,11 +3295,12 @@ int OptimizedBamExternalSortMPI(const swbam::BamInputBackend &input,
                             int compress_level,
                             size_t memory_limit,
                             const char *temp_prefix,
-                            MpiSortStats *stats) {
+                            MpiSortStats *stats,
+                            bool exact_splitters) {
     return OptimizedBamExternalSortMPIImpl(
         nullptr, &input, spans, span_count, body_sink,
         global_block_begin, rank, comm_size, compress_level,
-        memory_limit, temp_prefix, stats);
+        memory_limit, temp_prefix, stats, exact_splitters);
 }
 
 int OptimizedBamSortMPI(MemReader &reader,
@@ -3251,11 +3310,12 @@ int OptimizedBamSortMPI(MemReader &reader,
                     int comm_size,
                     int compress_level,
                     size_t memory_limit,
-                    MpiSortStats *stats) {
+                    MpiSortStats *stats,
+                    bool exact_splitters) {
     swbam::MemoryRankBodySink body_sink(&mem_writer);
     return OptimizedBamSortMPI(
         reader, body_sink, global_block_begin, rank, comm_size,
-        compress_level, memory_limit, stats);
+        compress_level, memory_limit, stats, exact_splitters);
 }
 
 int OptimizedBamExternalSortMPI(MemReader &reader,
@@ -3266,9 +3326,10 @@ int OptimizedBamExternalSortMPI(MemReader &reader,
                             int compress_level,
                             size_t memory_limit,
                             const char *temp_prefix,
-                            MpiSortStats *stats) {
+                            MpiSortStats *stats,
+                            bool exact_splitters) {
     swbam::MemoryRankBodySink body_sink(&mem_writer);
     return OptimizedBamExternalSortMPI(
         reader, body_sink, global_block_begin, rank, comm_size,
-        compress_level, memory_limit, temp_prefix, stats);
+        compress_level, memory_limit, temp_prefix, stats, exact_splitters);
 }

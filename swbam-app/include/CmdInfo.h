@@ -29,6 +29,7 @@ public:
     std::string rank_body_temp_dir_;
     std::string sort_memory_;
     std::string sort_temp_prefix_;
+    bool sort_exact_splitters_;
     int collate_bins_;
     bool collate_bins_explicit_;
     std::string collate_memory_;

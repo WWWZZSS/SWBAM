@@ -522,6 +522,7 @@ int ProcessSortMPI(CmdInfo *cmd_info) {
                    max_estimate_u64,
                    memory_limit);
             printf("MPI BAM sort mode policy: no -m => memory; otherwise all ranks use external when max(3 * rank_input_bytes + 256MiB) exceeds -m\n");
+            printf("MPI BAM sort splitters=%s\n", cmd_info->sort_exact_splitters_ ? "exact" : "sample");
         }
 
         double optimized_t0 = GetTime();
@@ -533,12 +534,13 @@ int ProcessSortMPI(CmdInfo *cmd_info) {
                       input_plan.rank_block_count(), rank_body_sink,
                       local_block_begin, rank, comm_size,
                       cmd_info->compress_level_, memory_limit,
-                      sort_temp_prefix.c_str(), &stats)
+                      sort_temp_prefix.c_str(), &stats, cmd_info->sort_exact_splitters_)
                 : OptimizedBamSortMPI(
                       *input_backend, input_plan.rank_spans(),
                       input_plan.rank_block_count(), rank_body_sink,
                       local_block_begin, rank, comm_size,
-                      cmd_info->compress_level_, memory_limit, &stats);
+                      cmd_info->compress_level_, memory_limit, &stats,
+                      cmd_info->sort_exact_splitters_);
 
         if (optimized_ret != 0) {
             fprintf(stderr, "[rank %d] ERROR: MPI BAM sort optimized body failed.\n", rank);

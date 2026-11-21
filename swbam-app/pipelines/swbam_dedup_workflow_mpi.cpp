@@ -183,6 +183,7 @@ int ProcessDedupWorkflowMPI(CmdInfo *cmd_info) {
     sort.in_file_name_ = fixmate_path;
     sort.out_file_name_ = sort_path;
     sort.sort_memory_ = cmd_info->pipeline_memory_;
+    sort.sort_exact_splitters_ = cmd_info->sort_exact_splitters_;
     sort.sort_temp_prefix_ =
         cmd_info->workflow_temp_prefix_ + ".sort-runs";
     if (WorkflowRunStage("sort", ProcessSortMPI, &sort,

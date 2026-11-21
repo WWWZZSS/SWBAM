@@ -358,7 +358,8 @@ int OptimizedBamSortMPI(MemReader &reader, MemWriter &mem_writer,
                     int comm_size,
                     int compress_level,
                     size_t memory_limit,
-                    MpiSortStats *stats);
+                    MpiSortStats *stats,
+                    bool exact_splitters = true);
 int OptimizedBamSortMPI(MemReader &reader,
                     swbam::RankBodySink &body_sink,
                     long long global_block_begin,
@@ -366,7 +367,8 @@ int OptimizedBamSortMPI(MemReader &reader,
                     int comm_size,
                     int compress_level,
                     size_t memory_limit,
-                    MpiSortStats *stats);
+                    MpiSortStats *stats,
+                    bool exact_splitters = true);
 int OptimizedBamSortMPI(const swbam::BamInputBackend &input,
                     const swbam::BgzfBlockSpan *spans,
                     size_t span_count,
@@ -376,7 +378,8 @@ int OptimizedBamSortMPI(const swbam::BamInputBackend &input,
                     int comm_size,
                     int compress_level,
                     size_t memory_limit,
-                    MpiSortStats *stats);
+                    MpiSortStats *stats,
+                    bool exact_splitters = true);
 int OptimizedBamExternalSortMPI(MemReader &reader, MemWriter &mem_writer,
                             long long global_block_begin,
                             int rank,
@@ -384,7 +387,8 @@ int OptimizedBamExternalSortMPI(MemReader &reader, MemWriter &mem_writer,
                             int compress_level,
                             size_t memory_limit,
                             const char *temp_prefix,
-                            MpiSortStats *stats);
+                            MpiSortStats *stats,
+                            bool exact_splitters = true);
 int OptimizedBamExternalSortMPI(MemReader &reader,
                             swbam::RankBodySink &body_sink,
                             long long global_block_begin,
@@ -393,7 +397,8 @@ int OptimizedBamExternalSortMPI(MemReader &reader,
                             int compress_level,
                             size_t memory_limit,
                             const char *temp_prefix,
-                            MpiSortStats *stats);
+                            MpiSortStats *stats,
+                            bool exact_splitters = true);
 int OptimizedBamExternalSortMPI(const swbam::BamInputBackend &input,
                             const swbam::BgzfBlockSpan *spans,
                             size_t span_count,
@@ -404,7 +409,8 @@ int OptimizedBamExternalSortMPI(const swbam::BamInputBackend &input,
                             int compress_level,
                             size_t memory_limit,
                             const char *temp_prefix,
-                            MpiSortStats *stats);
+                            MpiSortStats *stats,
+                            bool exact_splitters = true);
 
 int MpiWriteBlockToMem(MemWriter &w, bam_block *block);
 int MpiWriteBytesToMem(MemWriter &w, const char *data, size_t len);

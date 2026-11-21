@@ -59,6 +59,11 @@ run "$APP" markdup -i sorted.bam -o marked.bam -m 4G -l 300
 
 The `view` command selects the conversion based on the input format and output filename extension; its options differ from those of `samtools view`. BAM output uses compression level 1. For `sort` and `collate`, `-m` specifies the per-rank algorithm workspace and determines whether in-memory or external-memory processing is used. For `fixmate`, `-m` enables the generation of mate-score tags.
 
+`sort` and the sort stage of `dedup-workflow` use exact global splitters by default.
+Each rank receives the same number of records, to within one record. This does not
+guarantee equal byte counts or processing times. Use `--sample-splitters` to select
+splitters by regular sampling instead.
+
 SWBAM also provides a single command to execute the complete four-stage deduplication workflow:
 
 ```bash

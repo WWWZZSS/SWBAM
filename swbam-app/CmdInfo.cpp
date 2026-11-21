@@ -19,6 +19,7 @@ CmdInfo::CmdInfo() {
     rank_body_temp_dir_ = "";
     sort_memory_ = "";
     sort_temp_prefix_ = "";
+    sort_exact_splitters_ = true;
     collate_bins_ = 64;
     collate_bins_explicit_ = false;
     collate_memory_ = "";

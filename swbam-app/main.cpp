@@ -39,6 +39,14 @@ static int RunCommand(int argc, char **argv, int rank) {
     input(sort); output(sort);
     sort->add_option("-m,--memory", cmd.sort_memory_, "Algorithm workspace per rank, e.g. 8G");
     sort->add_option("-T,--temp-prefix", cmd.sort_temp_prefix_, "External-run file prefix");
+    const auto sort_splitters = [&](CLI::App *command) {
+        auto *exact = command->add_flag("--exact-splitters", cmd.sort_exact_splitters_,
+                                         "Use exact global splitters (default)");
+        auto *sample = command->add_flag_callback("--sample-splitters",
+            [&]() { cmd.sort_exact_splitters_ = false; }, "Use sampled splitters instead");
+        exact->excludes(sample);
+    };
+    sort_splitters(sort);
     CLI::App *collate = app.add_subcommand("collate", "Distributed QNAME collation");
     input(collate); output(collate);
     collate->add_option("-m,--memory", cmd.collate_memory_, "Algorithm workspace per rank, e.g. 8G");
@@ -57,6 +65,7 @@ static int RunCommand(int argc, char **argv, int rank) {
     input(workflow); output(workflow);
     workflow->add_option("-T,--temp-prefix", cmd.workflow_temp_prefix_, "Unique prefix for intermediate files")->required();
     workflow->add_option("-m,--memory", cmd.pipeline_memory_, "Algorithm workspace per rank")->required();
+    sort_splitters(workflow);
     auto *workflow_bins = workflow->add_option("-n,--bins", cmd.collate_bins_, "Logical QNAME hash bins");
     workflow->add_option("-l,--max-read-length", cmd.markdup_max_read_length_, "Read-length bound for duplicate marking")
         ->check(CLI::PositiveNumber);
